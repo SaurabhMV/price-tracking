@@ -5,25 +5,37 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 # App Configuration
-st.set_page_config(page_title="Professional Trend Dashboard", layout="wide")
-st.title("📊 Multi-Indicator Analysis Dashboard")
+st.set_page_config(page_title="Pro Trading Dashboard", layout="wide")
+st.title("📊 Multi-Timeframe Trend Dashboard")
 
+# Sidebar - User Inputs
+st.sidebar.header("Chart Settings")
 ticker = st.sidebar.text_input("Stock Ticker", "AAPL").upper()
-period = st.sidebar.selectbox("History", ["6mo", "1y", "2y"], index=0)
+
+# Period = How far back?
+period_options = ["1d", "5d", "1mo", "6mo", "1y", "2y", "5y", "max"]
+period = st.sidebar.selectbox("History (Period)", period_options, index=3)
+
+# Interval = How big is one candle?
+interval_options = ["1m", "5m", "15m", "30m", "1h", "1d", "1wk"]
+interval = st.sidebar.selectbox("Candle Interval", interval_options, index=5)
 
 if ticker:
     try:
-        # FIX: Use auto_adjust=True and handle the potential MultiIndex
-        data = yf.download(ticker, period=period, auto_adjust=True)
+        # 1. Fetch Data
+        # We use group_by='ticker' and auto_adjust to keep columns clean
+        data = yf.download(ticker, period=period, interval=interval, auto_adjust=True)
         
         if data.empty:
-            st.error("Invalid ticker or no data found.")
+            st.warning(f"No data found for {ticker} with Period: {period} and Interval: {interval}. Try a shorter period for intraday intervals.")
         else:
-            # Create a copy to avoid SettingWithCopy warnings
             df = data.copy()
+            
+            # FIX: If yfinance returns a MultiIndex (Price, Ticker), flatten it
+            if isinstance(df.columns, pd.MultiIndex):
+                df.columns = df.columns.get_level_values(0)
 
-            # --- 1. Calculations ---
-            # Moving Averages
+            # --- 2. Calculations ---
             df['SMA18'] = df['Close'].rolling(window=18).mean()
             df['SMA50'] = df['Close'].rolling(window=50).mean()
             
@@ -34,40 +46,36 @@ if ticker:
             rs = gain / loss
             df['RSI'] = 100 - (100 / (1 + rs))
 
-            # Signal Logic
+            # Signals
             df['Prev_18'] = df['SMA18'].shift(1)
             df['Prev_50'] = df['SMA50'].shift(1)
-            
-            # Logic for Markers
             buy_signals = df[(df['SMA18'] > df['SMA50']) & (df['Prev_18'] <= df['Prev_50'])]
             sell_signals = df[(df['SMA18'] < df['SMA50']) & (df['Prev_18'] >= df['Prev_50'])]
 
-            # --- 2. Create Subplots ---
+            # --- 3. Plotting ---
             fig = make_subplots(
-                rows=3, cols=1, 
-                shared_xaxes=True, 
+                rows=3, cols=1, shared_xaxes=True, 
                 vertical_spacing=0.05, 
-                subplot_titles=(f'{ticker} Price', 'Volume', 'RSI'), 
+                subplot_titles=(f'{ticker} Price ({interval})', 'Volume', 'RSI'), 
                 row_width=[0.2, 0.2, 0.6]
             )
 
-            # Row 1: Price & SMAs
+            # Price & SMAs
             fig.add_trace(go.Candlestick(x=df.index, open=df['Open'], high=df['High'], 
                           low=df['Low'], close=df['Close'], name='Price'), row=1, col=1)
-            fig.add_trace(go.Scatter(x=df.index, y=df['SMA18'], line=dict(color='orange'), name='18 SMA'), row=1, col=1)
-            fig.add_trace(go.Scatter(x=df.index, y=df['SMA50'], line=dict(color='cyan'), name='50 SMA'), row=1, col=1)
+            fig.add_trace(go.Scatter(x=df.index, y=df['SMA18'], line=dict(color='orange', width=1.5), name='18 SMA'), row=1, col=1)
+            fig.add_trace(go.Scatter(x=df.index, y=df['SMA50'], line=dict(color='cyan', width=1.5), name='50 SMA'), row=1, col=1)
             
-            # Markers
+            # Buy/Sell Markers
             fig.add_trace(go.Scatter(x=buy_signals.index, y=buy_signals['SMA18'], mode='markers', 
-                          marker=dict(symbol='triangle-up', size=12, color='lime'), name='Buy'), row=1, col=1)
+                          marker=dict(symbol='triangle-up', size=12, color='lime'), name='Buy Signal'), row=1, col=1)
             fig.add_trace(go.Scatter(x=sell_signals.index, y=sell_signals['SMA18'], mode='markers', 
-                          marker=dict(symbol='triangle-down', size=12, color='red'), name='Sell'), row=1, col=1)
+                          marker=dict(symbol='triangle-down', size=12, color='red'), name='Sell Signal'), row=1, col=1)
 
-            # Row 2: Volume (using .squeeze() to ensure it's a 1D Series)
-            fig.add_trace(go.Bar(x=df.index, y=df['Volume'].iloc[:,0] if isinstance(df['Volume'], pd.DataFrame) else df['Volume'], 
-                                 name='Volume', marker_color='gray'), row=2, col=1)
+            # Volume
+            fig.add_trace(go.Bar(x=df.index, y=df['Volume'], name='Volume', marker_color='gray', opacity=0.5), row=2, col=1)
 
-            # Row 3: RSI
+            # RSI
             fig.add_trace(go.Scatter(x=df.index, y=df['RSI'], line=dict(color='magenta'), name='RSI'), row=3, col=1)
             fig.add_hline(y=70, line_dash="dash", line_color="red", row=3, col=1)
             fig.add_hline(y=30, line_dash="dash", line_color="green", row=3, col=1)
@@ -75,5 +83,11 @@ if ticker:
             fig.update_layout(template="plotly_dark", height=800, xaxis_rangeslider_visible=False)
             st.plotly_chart(fig, use_container_width=True)
 
+            # Metrics
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Last Close", f"{df['Close'].iloc[-1]:.2f}")
+            c2.metric("RSI", f"{df['RSI'].iloc[-1]:.1f}")
+            c3.metric("Signals Found", len(buy_signals) + len(sell_signals))
+
     except Exception as e:
-        st.error(f"Error fetching data: {e}")
+        st.error(f"Error: {e}")
