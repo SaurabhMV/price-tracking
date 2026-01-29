@@ -1,104 +1,113 @@
 import streamlit as st
 import yfinance as yf
 import pandas as pd
+import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 # App Configuration
-st.set_page_config(page_title="Custom Trend Dashboard", layout="wide")
-st.title("📈 Advanced Stock Analysis Dashboard")
+st.set_page_config(page_title="SMA Crossover Signals", layout="wide")
+st.title("📈 18 vs 40 SMA Strategy Dashboard")
 
-# --- Sidebar - User Inputs ---
-st.sidebar.header("Chart Settings")
+# --- Sidebar Inputs ---
+st.sidebar.header("Configuration")
 ticker = st.sidebar.text_input("Stock Ticker", "AAPL").upper()
-
-# Flexible SMA Sliders
-sma_short_len = st.sidebar.slider("Short SMA Length", 5, 30, 18)
-sma_long_len = st.sidebar.slider("Long SMA Length", 30, 200, 40) # Set to 40 as per your request
-
-period = st.sidebar.selectbox("History (Period)", ["1d", "5d", "1mo", "6mo", "1y", "2y", "5y"], index=3)
-interval = st.sidebar.selectbox("Candle Interval", ["1m", "5m", "15m", "30m", "1h", "1d", "1wk"], index=5)
+period = st.sidebar.selectbox("History", ["1mo", "6mo", "1y", "2y", "5y"], index=2)
+interval = st.sidebar.selectbox("Interval", ["1h", "1d", "1wk"], index=1)
 
 if ticker:
     try:
-        # 1. Fetch Data
-        data = yf.download(ticker, period=period, interval=interval, auto_adjust=True)
-        
-        if data.empty:
-            st.warning(f"No data found for {ticker}.")
+        # 1. Fetch and Clean Data
+        df = yf.download(ticker, period=period, interval=interval, auto_adjust=True)
+        if df.empty:
+            st.error("No data found.")
         else:
-            df = data.copy()
+            # Flatten MultiIndex if necessary
             if isinstance(df.columns, pd.MultiIndex):
                 df.columns = df.columns.get_level_values(0)
 
             # --- 2. Calculations ---
-            df['SMA_S'] = df['Close'].rolling(window=sma_short_len).mean()
-            df['SMA_L'] = df['Close'].rolling(window=sma_long_len).mean()
+            df['SMA18'] = df['Close'].rolling(window=18).mean()
+            df['SMA40'] = df['Close'].rolling(window=40).mean()
             
-            # RSI
+            # Identify Crossover Points
+            # 1 when 18 > 40, else 0
+            df['Signal'] = 0.0
+            df.loc[df.index[18:], 'Signal'] = np.where(df['SMA18'][18:] > df['SMA40'][18:], 1.0, 0.0)
+            
+            # Create 'Position' to find where Signal changes
+            # 1.0 is Buy (cross up), -1.0 is Sell (cross down)
+            df['Position'] = df['Signal'].diff()
+
+            # RSI for extra context
             delta = df['Close'].diff()
             gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
             loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
-            rs = gain / loss
-            df['RSI'] = 100 - (100 / (1 + rs))
+            df['RSI'] = 100 - (100 / (1 + (gain / loss)))
 
-            # Trend Alert
-            last_s = df['SMA_S'].iloc[-1]
-            last_l = df['SMA_L'].iloc[-1]
-            if last_s > last_l:
-                st.success(f"**BULLISH:** {sma_short_len} SMA is above {sma_long_len} SMA.")
-            else:
-                st.error(f"**BEARISH:** {sma_short_len} SMA is below {sma_long_len} SMA.")
-
-            # --- 3. Plotting with Custom Hover ---
-            fig = make_subplots(
-                rows=3, cols=1, shared_xaxes=True, 
-                vertical_spacing=0.05, 
-                subplot_titles=(f'{ticker} Price', 'Volume', 'RSI'), 
-                row_width=[0.2, 0.2, 0.6]
-            )
-
-            # Row 1: Candlestick
-            fig.add_trace(go.Candlestick(
-                x=df.index, open=df['Open'], high=df['High'], 
-                low=df['Low'], close=df['Close'], name='Price'
-            ), row=1, col=1)
-
-            # Row 1: SMA Short with Price in Hover
-            fig.add_trace(go.Scatter(
-                x=df.index, y=df['SMA_S'], 
-                line=dict(color='orange', width=2), 
-                name=f'{sma_short_len} SMA',
-                customdata=df['Close'], # Injecting stock price here
-                hovertemplate="<b>Price: $%{customdata:.2f}</b><br>SMA: $%{y:.2f}<extra></extra>"
-            ), row=1, col=1)
-
-            # Row 1: SMA Long with Price in Hover
-            fig.add_trace(go.Scatter(
-                x=df.index, y=df['SMA_L'], 
-                line=dict(color='cyan', width=2), 
-                name=f'{sma_long_len} SMA',
-                customdata=df['Close'], # Injecting stock price here
-                hovertemplate="<b>Price: $%{customdata:.2f}</b><br>SMA: $%{y:.2f}<extra></extra>"
-            ), row=1, col=1)
-
-            # Row 2: Volume
-            fig.add_trace(go.Bar(x=df.index, y=df['Volume'], name='Volume', marker_color='gray', opacity=0.5), row=2, col=1)
-
-            # Row 3: RSI
-            fig.add_trace(go.Scatter(x=df.index, y=df['RSI'], line=dict(color='magenta'), name='RSI'), row=3, col=1)
-            fig.add_hline(y=70, line_dash="dash", line_color="red", row=3, col=1)
-            fig.add_hline(y=30, line_dash="dash", line_color="green", row=3, col=1)
-
-            # Layout - We use 'x' hovermode to see everything at once
-            fig.update_layout(
-                template="plotly_dark", 
-                height=800, 
-                xaxis_rangeslider_visible=False,
-                hovermode='x unified' # This shows a vertical line and combined hover data
-            )
+            # --- 3. UI Indicators ---
+            last_pos = df['Position'].iloc[-1]
+            current_trend = "Bullish" if df['SMA18'].iloc[-1] > df['SMA40'].iloc[-1] else "Bearish"
             
+            col1, col2 = st.columns(2)
+            with col1:
+                if current_trend == "Bullish":
+                    st.success(f"Current Trend: **BULLISH** (18 SMA > 40 SMA)")
+                else:
+                    st.error(f"Current Trend: **BEARISH** (18 SMA < 40 SMA)")
+            
+            # --- 4. Plotting ---
+            fig = make_subplots(
+                rows=2, cols=1, shared_xaxes=True, 
+                vertical_spacing=0.08, 
+                subplot_titles=(f'{ticker} Price Action & Signals', 'RSI Momentum'), 
+                row_width=[0.3, 0.7]
+            )
+
+            # Price and SMAs
+            fig.add_trace(go.Candlestick(x=df.index, open=df['Open'], high=df['High'], 
+                          low=df['Low'], close=df['Close'], name='Price'), row=1, col=1)
+            
+            fig.add_trace(go.Scatter(x=df.index, y=df['SMA18'], line=dict(color='orange', width=2), 
+                                     name='18 SMA', hovertemplate="Price: $%{customdata:.2f}<br>18 SMA: %{y:.2f}",
+                                     customdata=df['Close']), row=1, col=1)
+            
+            fig.add_trace(go.Scatter(x=df.index, y=df['SMA40'], line=dict(color='cyan', width=2), 
+                                     name='40 SMA', hovertemplate="Price: $%{customdata:.2f}<br>40 SMA: %{y:.2f}",
+                                     customdata=df['Close']), row=1, col=1)
+
+            # Add BUY Markers (Where 18 crosses above 40)
+            buy_pts = df[df['Position'] == 1]
+            fig.add_trace(go.Scatter(
+                x=buy_pts.index, y=buy_pts['SMA18'], mode='markers+text',
+                marker=dict(symbol='triangle-up', size=15, color='lime'),
+                name='BUY SIGNAL', text=["BUY"] * len(buy_pts), textposition="bottom center"
+            ), row=1, col=1)
+
+            # Add SELL Markers (Where 18 crosses below 40)
+            sell_pts = df[df['Position'] == -1]
+            fig.add_trace(go.Scatter(
+                x=sell_pts.index, y=sell_pts['SMA18'], mode='markers+text',
+                marker=dict(symbol='triangle-down', size=15, color='red'),
+                name='SELL SIGNAL', text=["SELL"] * len(sell_pts), textposition="top center"
+            ), row=1, col=1)
+
+            # RSI Row
+            fig.add_trace(go.Scatter(x=df.index, y=df['RSI'], line=dict(color='magenta'), name='RSI'), row=2, col=1)
+            fig.add_hline(y=70, line_dash="dash", line_color="red", row=2, col=1)
+            fig.add_hline(y=30, line_dash="dash", line_color="green", row=2, col=1)
+
+            fig.update_layout(template="plotly_dark", height=800, xaxis_rangeslider_visible=False, hovermode='x unified')
             st.plotly_chart(fig, use_container_width=True)
+
+            # Signal History Table
+            st.subheader("Recent Trade Signals")
+            signals_only = df[df['Position'] != 0][['Close', 'SMA18', 'SMA40', 'Position']].tail(10)
+            if not signals_only.empty:
+                signals_only['Action'] = signals_only['Position'].apply(lambda x: "BUY" if x > 0 else "SELL")
+                st.table(signals_only[['Close', 'Action']])
+            else:
+                st.info("No crossover signals detected in this time period.")
 
     except Exception as e:
         st.error(f"Error: {e}")
