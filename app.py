@@ -6,48 +6,35 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 # App Configuration
-st.set_page_config(page_title="Intraday Trend Dashboard", layout="wide")
-st.title("📈 18/50 SMA Multi-Timeframe Dashboard")
+st.set_page_config(page_title="Pro SMA Dashboard", layout="wide")
+st.title("📈 18 vs 50 SMA Strategy + Volume Analysis")
 
 # --- Sidebar Inputs ---
 st.sidebar.header("Chart Settings")
 ticker = st.sidebar.text_input("Stock Ticker", "AAPL").upper()
-
-# Period Selection
-period_options = ["1d", "5d", "1mo", "6mo", "1y", "2y", "5y", "max"]
-period = st.sidebar.selectbox("History (Period)", period_options, index=2)
-
-# Interval Selection (New Options Added)
-interval_mapping = {
-    "1 Minute": "1m",
-    "5 Minutes": "5m",
-    "15 Minutes": "15m",
-    "30 Minutes": "30m",
-    "1 Hour": "1h",
-    "1 Day": "1d",
-    "1 Week": "1wk"
-}
-interval_display = st.sidebar.selectbox("Candle Interval", list(interval_mapping.keys()), index=5)
-selected_interval = interval_mapping[interval_display]
+period = st.sidebar.selectbox("History", ["1mo", "6mo", "1y", "2y", "5y", "max"], index=2)
+interval = st.sidebar.selectbox("Interval", ["1h", "1d", "1wk"], index=1)
 
 if ticker:
     try:
         # 1. Fetch Data
-        df = yf.download(ticker, period=period, interval=selected_interval, auto_adjust=True)
-        
+        df = yf.download(ticker, period=period, interval=interval, auto_adjust=True)
         if df.empty:
-            st.warning(f"⚠️ No data found. Yahoo Finance usually limits '{interval_display}' data to shorter periods (e.g., 60 days). Try reducing your 'History' setting.")
+            st.error("No data found for this ticker.")
         else:
             # Flatten MultiIndex if necessary
             if isinstance(df.columns, pd.MultiIndex):
                 df.columns = df.columns.get_level_values(0)
 
             # --- 2. Calculations ---
+            # Price SMAs
             df['SMA18'] = df['Close'].rolling(window=18).mean()
             df['SMA50'] = df['Close'].rolling(window=50).mean()
+            
+            # Volume Moving Average (20 periods)
             df['Vol_Avg'] = df['Volume'].rolling(window=20).mean()
             
-            # RSI
+            # RSI Calculation
             delta = df['Close'].diff()
             gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
             loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
@@ -65,7 +52,7 @@ if ticker:
             fig = make_subplots(
                 rows=3, cols=1, shared_xaxes=True, 
                 vertical_spacing=0.03, 
-                subplot_titles=(f'{ticker} Price & SMAs', 'Volume & 20-MA', 'RSI Momentum'), 
+                subplot_titles=(f'{ticker} Price', 'Volume with 20-MA', 'RSI Momentum'), 
                 row_width=[0.2, 0.2, 0.6] 
             )
 
@@ -75,7 +62,7 @@ if ticker:
             fig.add_trace(go.Scatter(x=df.index, y=df['SMA18'], line=dict(color='orange', width=2), name='18 SMA'), row=1, col=1)
             fig.add_trace(go.Scatter(x=df.index, y=df['SMA50'], line=dict(color='cyan', width=2), name='50 SMA'), row=1, col=1)
 
-            # Markers (BUY/SELL)
+            # Buy/Sell Markers
             buy_pts = df[df['Position'] == 1]
             fig.add_trace(go.Scatter(x=buy_pts.index, y=buy_pts['SMA18'], mode='markers+text',
                 marker=dict(symbol='triangle-up', size=14, color='lime'),
@@ -99,5 +86,11 @@ if ticker:
             fig.update_layout(template="plotly_dark", height=900, xaxis_rangeslider_visible=False, hovermode='x unified')
             st.plotly_chart(fig, use_container_width=True)
 
+            # Sidebar Live Metrics
+            st.sidebar.divider()
+            st.sidebar.metric("Last Close", f"${df['Close'].iloc[-1]:.2f}")
+            vol_status = "High" if df['Volume'].iloc[-1] > df['Vol_Avg'].iloc[-1] else "Normal"
+            st.sidebar.write(f"**Current Volume:** {vol_status}")
+
     except Exception as e:
-        st.error(f"Something went wrong: {e}")
+        st.error(f"Error: {e}")
