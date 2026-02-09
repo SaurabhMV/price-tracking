@@ -12,26 +12,37 @@ st.title("📈 18 vs 50 SMA Strategy + Volume Analysis")
 # --- Sidebar Inputs ---
 st.sidebar.header("Chart Settings")
 ticker = st.sidebar.text_input("Stock Ticker", "AAPL").upper()
-period = st.sidebar.selectbox("History", ["1mo", "6mo", "1y", "2y", "5y", "max"], index=2)
-interval = st.sidebar.selectbox("Interval", ["30m", "1h", "1d", "1wk"], index=1)
+
+# Period options
+period = st.sidebar.selectbox("History", ["1d", "5d", "1mo", "6mo", "1y", "2y", "5y", "max"], index=2)
+
+# Expanded Interval options
+interval_mapping = {
+    "5 Minutes": "5m",
+    "15 Minutes": "15m",
+    "30 Minutes": "30m",
+    "1 Hour": "1h",
+    "1 Day": "1d",
+    "1 Week": "1wk"
+}
+interval_display = st.sidebar.selectbox("Interval", list(interval_mapping.keys()), index=4)
+selected_interval = interval_mapping[interval_display]
 
 if ticker:
     try:
         # 1. Fetch Data
-        df = yf.download(ticker, period=period, interval=interval, auto_adjust=True)
+        df = yf.download(ticker, period=period, interval=selected_interval, auto_adjust=True)
+        
         if df.empty:
-            st.error("No data found for this ticker.")
+            st.error(f"No data found for {ticker}. Hint: 5m/15m/30m data is usually limited to the last 60 days.")
         else:
             # Flatten MultiIndex if necessary
             if isinstance(df.columns, pd.MultiIndex):
                 df.columns = df.columns.get_level_values(0)
 
             # --- 2. Calculations ---
-            # Price SMAs
             df['SMA18'] = df['Close'].rolling(window=18).mean()
             df['SMA50'] = df['Close'].rolling(window=50).mean()
-            
-            # Volume Moving Average (20 periods)
             df['Vol_Avg'] = df['Volume'].rolling(window=20).mean()
             
             # RSI Calculation
@@ -57,21 +68,31 @@ if ticker:
             )
 
             # Row 1: Candlestick & SMAs
-            fig.add_trace(go.Candlestick(x=df.index, open=df['Open'], high=df['High'], 
-                          low=df['Low'], close=df['Close'], name='Price'), row=1, col=1)
-            fig.add_trace(go.Scatter(x=df.index, y=df['SMA18'], line=dict(color='orange', width=2), name='18 SMA'), row=1, col=1)
-            fig.add_trace(go.Scatter(x=df.index, y=df['SMA50'], line=dict(color='cyan', width=2), name='50 SMA'), row=1, col=1)
+            fig.add_trace(go.Candlestick(
+                x=df.index, open=df['Open'], high=df['High'], 
+                low=df['Low'], close=df['Close'], name='Market'
+            ), row=1, col=1)
+            
+            fig.add_trace(go.Scatter(
+                x=df.index, y=df['SMA18'], line=dict(color='orange', width=2), 
+                name='18 SMA', hovertemplate='%{y:.2f}'
+            ), row=1, col=1)
+            
+            fig.add_trace(go.Scatter(
+                x=df.index, y=df['SMA50'], line=dict(color='cyan', width=2), 
+                name='50 SMA', hovertemplate='%{y:.2f}'
+            ), row=1, col=1)
 
             # Buy/Sell Markers
             buy_pts = df[df['Position'] == 1]
             fig.add_trace(go.Scatter(x=buy_pts.index, y=buy_pts['SMA18'], mode='markers+text',
                 marker=dict(symbol='triangle-up', size=14, color='lime'),
-                name='BUY', text=["BUY"] * len(buy_pts), textposition="bottom center"), row=1, col=1)
+                name='BUY Signal', text=["BUY"] * len(buy_pts), textposition="bottom center"), row=1, col=1)
 
             sell_pts = df[df['Position'] == -1]
             fig.add_trace(go.Scatter(x=sell_pts.index, y=sell_pts['SMA18'], mode='markers+text',
                 marker=dict(symbol='triangle-down', size=14, color='red'),
-                name='SELL', text=["SELL"] * len(sell_pts), textposition="top center"), row=1, col=1)
+                name='SELL Signal', text=["SELL"] * len(sell_pts), textposition="top center"), row=1, col=1)
 
             # Row 2: Volume Bars + Volume Avg
             vol_colors = ['#26a69a' if row['Close'] >= row['Open'] else '#ef5350' for _, row in df.iterrows()]
@@ -83,7 +104,15 @@ if ticker:
             fig.add_hline(y=70, line_dash="dash", line_color="red", row=3, col=1)
             fig.add_hline(y=30, line_dash="dash", line_color="green", row=3, col=1)
 
-            fig.update_layout(template="plotly_dark", height=900, xaxis_rangeslider_visible=False, hovermode='x unified')
+            # Layout & Hover Config
+            fig.update_layout(
+                template="plotly_dark", 
+                height=900, 
+                xaxis_rangeslider_visible=False, 
+                hovermode='x unified',
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+            )
+            
             st.plotly_chart(fig, use_container_width=True)
 
             # Sidebar Live Metrics
