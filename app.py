@@ -7,16 +7,16 @@ from plotly.subplots import make_subplots
 
 # App Configuration
 st.set_page_config(page_title="Pro SMA Dashboard", layout="wide")
-st.title("📈 18 vs 50 SMA Strategy + Volume Analysis")
+st.title("📈 18 vs 50 SMA Strategy + Wilder's RSI")
 
 # --- Sidebar Inputs ---
 st.sidebar.header("Chart Settings")
 ticker = st.sidebar.text_input("Stock Ticker", "AAPL").upper()
 
 # Period options
-period = st.sidebar.selectbox("History", ["1d", "5d", "1mo", "6mo", "1y", "2y", "5y", "max"], index=2)
+period = st.sidebar.selectbox("History", ["1d", "5d", "1mo", "6mo", "1y", "2y", "5y", "max"], index=4)
 
-# Expanded Interval options
+# Interval options
 interval_mapping = {
     "5 Minutes": "5m",
     "15 Minutes": "15m",
@@ -34,7 +34,7 @@ if ticker:
         df = yf.download(ticker, period=period, interval=selected_interval, auto_adjust=True)
         
         if df.empty:
-            st.error(f"No data found for {ticker}. Hint: 5m/15m/30m data is usually limited to the last 60 days.")
+            st.error(f"No data found for {ticker}. Hint: Intraday data (5m/15m) is limited to 60 days.")
         else:
             # Flatten MultiIndex if necessary
             if isinstance(df.columns, pd.MultiIndex):
@@ -45,11 +45,21 @@ if ticker:
             df['SMA50'] = df['Close'].rolling(window=50).mean()
             df['Vol_Avg'] = df['Volume'].rolling(window=20).mean()
             
-            # RSI Calculation
+            # --- RSI Calculation (Wilder's Smoothing) ---
             delta = df['Close'].diff()
-            gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
-            loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
-            df['RSI'] = 100 - (100 / (1 + (gain / loss)))
+            
+            # Separate gains and losses
+            gain = delta.where(delta > 0, 0)
+            loss = -delta.where(delta < 0, 0)
+            
+            # Use EWM with com=13 (equivalent to alpha=1/14) and adjust=False
+            # This replicates the recursive Wilder's formula: 
+            # Val_today = (Val_yesterday * 13 + Current) / 14
+            avg_gain = gain.ewm(com=13, adjust=False, min_periods=14).mean()
+            avg_loss = loss.ewm(com=13, adjust=False, min_periods=14).mean()
+            
+            rs = avg_gain / avg_loss
+            df['RSI'] = 100 - (100 / (1 + rs))
 
             # Crossover Detection
             df['Signal'] = 0.0
@@ -63,7 +73,7 @@ if ticker:
             fig = make_subplots(
                 rows=3, cols=1, shared_xaxes=True, 
                 vertical_spacing=0.03, 
-                subplot_titles=(f'{ticker} Price', 'Volume with 20-MA', 'RSI Momentum'), 
+                subplot_titles=(f'{ticker} Price', 'Volume with 20-MA', 'RSI (Wilder)'), 
                 row_width=[0.2, 0.2, 0.6] 
             )
 
@@ -75,12 +85,12 @@ if ticker:
             
             fig.add_trace(go.Scatter(
                 x=df.index, y=df['SMA18'], line=dict(color='orange', width=2), 
-                name='18 SMA', hovertemplate='%{y:.2f}'
+                name='18 SMA', hovertemplate='18 SMA: %{y:.2f}'
             ), row=1, col=1)
             
             fig.add_trace(go.Scatter(
                 x=df.index, y=df['SMA50'], line=dict(color='cyan', width=2), 
-                name='50 SMA', hovertemplate='%{y:.2f}'
+                name='50 SMA', hovertemplate='50 SMA: %{y:.2f}'
             ), row=1, col=1)
 
             # Buy/Sell Markers
@@ -100,7 +110,7 @@ if ticker:
             fig.add_trace(go.Scatter(x=df.index, y=df['Vol_Avg'], line=dict(color='yellow', width=1.5), name='Vol 20-MA'), row=2, col=1)
 
             # Row 3: RSI
-            fig.add_trace(go.Scatter(x=df.index, y=df['RSI'], line=dict(color='magenta'), name='RSI'), row=3, col=1)
+            fig.add_trace(go.Scatter(x=df.index, y=df['RSI'], line=dict(color='magenta', width=2), name='RSI'), row=3, col=1)
             fig.add_hline(y=70, line_dash="dash", line_color="red", row=3, col=1)
             fig.add_hline(y=30, line_dash="dash", line_color="green", row=3, col=1)
 
@@ -120,6 +130,7 @@ if ticker:
             st.sidebar.metric("Last Close", f"${df['Close'].iloc[-1]:.2f}")
             vol_status = "High" if df['Volume'].iloc[-1] > df['Vol_Avg'].iloc[-1] else "Normal"
             st.sidebar.write(f"**Current Volume:** {vol_status}")
+            st.sidebar.metric("Current RSI", f"{df['RSI'].iloc[-1]:.1f}")
 
     except Exception as e:
         st.error(f"Error: {e}")
