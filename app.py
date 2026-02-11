@@ -69,10 +69,10 @@ if ticker:
             curr_50 = df['SMA50'].iloc[-1]
             curr_rsi = df['RSI'].iloc[-1]
 
-            # Logic Engine
+            # Logic Engine for Sentiment
             sentiment = ""
             if curr_18 > curr_50:
-                if curr_price >= curr_res * 0.99: # Within 1% of resistance
+                if curr_price >= curr_res * 0.99:
                     sentiment = "🚀 BULLISH TREND - Approaching Resistance. (Wait for Breakout above ${:.2f})".format(curr_res)
                     st.info(sentiment)
                 elif curr_price > curr_res:
@@ -82,7 +82,7 @@ if ticker:
                     sentiment = "✅ BULLISH TREND - Price is healthy."
                     st.success(sentiment)
             else:
-                if curr_price <= curr_sup * 1.01: # Within 1% of support
+                if curr_price <= curr_sup * 1.01:
                     sentiment = "⚠️ BEARISH TREND - Near Support. (Watch for Bounce at ${:.2f})".format(curr_sup)
                     st.warning(sentiment)
                 else:
@@ -128,7 +128,7 @@ if ticker:
             fig.add_trace(go.Scatter(x=df.index, y=df['SMA18'], line=dict(color='orange', width=2), name='18 SMA'), row=1, col=1)
             fig.add_trace(go.Scatter(x=df.index, y=df['SMA50'], line=dict(color='cyan', width=2), name='50 SMA'), row=1, col=1)
 
-            # S/R Lines
+            # S/R Lines on Chart
             fig.add_hline(y=curr_res, line_dash="dot", line_color="red", row=1, col=1, annotation_text="Res")
             fig.add_hline(y=curr_sup, line_dash="dot", line_color="green", row=1, col=1, annotation_text="Sup")
 
@@ -170,11 +170,14 @@ if ticker:
                 st.subheader("📝 Trade Log")
                 st.dataframe(trades_df.style.format({'Buy Price': '{:.2f}', 'Sell Price': '{:.2f}', 'Profit %': '{:.2f}%'}))
             else:
-                st.warning("No completed trades found in this period. Try increasing the 'History' setting or changing the 'Interval'.")
+                st.warning("No completed trades found. Try increasing 'History' to find more crossover events.")
 
-            # Sidebar Analytics
+            # --- 7. Sidebar Analytics ---
             st.sidebar.divider()
+            st.sidebar.subheader("Live Metrics")
             st.sidebar.metric("Current Price", f"${curr_price:.2f}")
+            st.sidebar.metric("Resistance (Ceiling)", f"${curr_res:.2f}")
+            st.sidebar.metric("Support (Floor)", f"${curr_sup:.2f}")
             st.sidebar.metric("RSI Level", f"{curr_rsi:.1f}")
             st.sidebar.write(f"**Market Status:** {sentiment}")
 
